@@ -1,0 +1,105 @@
+%% Grayscale-based mixing analysis with inlet calibration
+% Author: ---
+% Assumptions:
+%  - Linear camera response after rgb2lin
+%  - Dye affects brightness monotonically
+%  - Inlets define 0 (water) and 1 (dye)
+
+clear; clc;
+
+%% 1. Load and linearize image
+I = im2double(imread('1cmstraight.jfif'));
+I_lin = rgb2lin(I);        % IMPORTANT: remove gamma
+
+%% 2. Convert to grayscale (luminance)
+I_gray = rgb2gray(I_lin);
+
+figure;
+imshow(I_gray, []);
+title('Linear grayscale image');
+
+%% 3. Select ROIs (interactive)
+disp('Select WATER inlet ROI');
+imshow(I_gray, []);
+roi_water = drawrectangle;
+mask_water = createMask(roi_water);
+
+disp('Select DYE inlet ROI');
+roi_dye = drawrectangle;
+mask_dye = createMask(roi_dye);
+
+disp('Select OUTLET 1 ROI');
+roi_out1 = drawrectangle;
+mask_out1 = createMask(roi_out1);
+
+disp('Select OUTLET 2 ROI');
+roi_out2 = drawrectangle;
+mask_out2 = createMask(roi_out2);
+
+%% 4. Extract grayscale values
+Iw = I_gray(mask_water);
+Id = I_gray(mask_dye);
+Io1 = I_gray(mask_out1);
+Io2 = I_gray(mask_out2);
+
+%% 5. Optional: remove extreme pixels (reflections / noise)
+clipLow  = 0.02;
+clipHigh = 0.98;
+
+Iw = Iw(Iw > clipLow & Iw < clipHigh);
+Id = Id(Id > clipLow & Id < clipHigh);
+Io1 = Io1(Io1 > clipLow & Io1 < clipHigh);
+Io2 = Io2(Io2 > clipLow & Io2 < clipHigh);
+
+%% 6. Inlet-based calibration (0 = water, 1 = dye)
+Iw_mean = mean(Iw);
+Id_mean = mean(Id);
+
+if abs(Id_mean - Iw_mean) < 1e-6
+    error('Inlet grayscale values too close — calibration unstable.');
+end
+
+calibrate = @(I) (I - Iw_mean) ./ (Id_mean - Iw_mean);
+
+Io1_cal = calibrate(Io1);
+Io2_cal = calibrate(Io2);
+
+%% 7. Mixing statistics
+stats = @(x) struct( ...
+    'mean', mean(x), ...
+    'std',  std(x), ...
+    'CV',   std(x) / mean(x));
+
+S_out1 = stats(Io1_cal);
+S_out2 = stats(Io2_cal);
+
+%% 8. Display results
+fprintf('\n=== Grayscale mixing analysis ===\n');
+fprintf('Water inlet mean gray: %.4f\n', Iw_mean);
+fprintf('Dye inlet mean gray:   %.4f\n\n', Id_mean);
+
+fprintf('Outlet 1: mean = %.3f, std = %.3f, CV = %.3f\n', ...
+        S_out1.mean, S_out1.std, S_out1.CV);
+fprintf('Outlet 2: mean = %.3f, std = %.3f, CV = %.3f\n', ...
+        S_out2.mean, S_out2.std, S_out2.CV);
+
+fprintf('\nIdeal 50:50 mix corresponds to calibrated value = 0.5\n');
+
+%% 9. Visualize calibrated outlet histograms
+figure;
+histogram(Io1_cal, 50, 'Normalization', 'pdf'); hold on;
+histogram(Io2_cal, 50, 'Normalization', 'pdf');
+xline(0.5, '--k', 'Ideal mix');
+xlabel('Calibrated grayscale (0 = water, 1 = dye)');
+ylabel('PDF');
+legend('Outlet 1', 'Outlet 2');
+title('Outlet concentration distributions');
+grid on;
+
+%% 10. Optional: calibrated grayscale map (for visualization)
+I_cal = calibrate(I_gray);
+figure;
+imshow(I_cal, [-0.2 1.2]);
+colormap jet;
+colorbar;
+title('Calibrated grayscale map (relative concentration)');
